@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SNOWFIELD.EXE</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
+  canvas#gl { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; }
+  #ui { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+  #ui::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: repeating-linear-gradient(
+      to bottom,
+      transparent 0px, transparent 3px,
+      rgba(0,0,0,0.15) 3px, rgba(0,0,0,0.15) 4px
+    );
+    pointer-events: none;
+  }
+  #upload-panel {
+    position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 14px;
+    background: rgba(0,0,0,0.85); border: 2px solid #fff;
+    padding: 12px 22px; pointer-events: all; z-index: 20;
+  }
+  #upload-panel label {
+    color: #fff; font-size: 13px; letter-spacing: 2px;
+    text-transform: uppercase; cursor: pointer;
+    display: flex; align-items: center; gap: 10px;
+  }
+  #upload-panel label span {
+    display: inline-block; padding: 6px 14px;
+    border: 2px solid #fff; color: #fff;
+    font-size: 11px; letter-spacing: 2px; cursor: pointer; transition: background 0.1s;
+  }
+  #upload-panel label span:hover { background: #fff; color: #000; }
+  #file-input { display: none; }
+  #track-name { color: #aaa; font-size: 11px; letter-spacing: 1px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #corner-hud {
+    position: fixed; top: 18px; left: 22px;
+    color: #fff; font-size: 11px; letter-spacing: 2px;
+    line-height: 1.9; pointer-events: none; z-index: 20;
+    text-shadow: 0 0 8px #fff;
+  }
+  #corner-hud .title { font-size: 15px; letter-spacing: 4px; margin-bottom: 2px; }
+  #vignette {
+    position: fixed; inset: 0; pointer-events: none; z-index: 15;
+    background: radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.75) 100%);
+  }
+  @keyframes blink {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0; }
+  }
+  #audio-panel {
+    position: fixed; top: 18px; right: 22px;
+    display: flex; flex-direction: column; gap: 4px;
+    background: rgba(0,0,0,0.88); border: 2px solid #fff;
+    padding: 10px 14px; pointer-events: all; z-index: 20;
+    image-rendering: pixelated;
+  }
+  #audio-panel .btn-row {
+    display: flex; gap: 4px;
+  }
+  #audio-panel button {
+    font-family: 'Courier New', monospace;
+    font-size: 9px; letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #fff; background: #000;
+    border: 2px solid #fff;
+    padding: 5px 8px;
+    cursor: pointer;
+    outline: none;
+    transition: background 0.05s, color 0.05s;
+    image-rendering: pixelated;
+  }
+  #audio-panel button:hover {
+    background: #fff; color: #000;
+  }
+  #audio-panel button:active {
+    background: #aaa; color: #000;
+  }
+  #audio-panel button.active {
+    background: #fff; color: #000;
+  }
+  #audio-vol-display {
+    color: #aaa; font-size: 9px; letter-spacing: 2px;
+    text-align: center; margin-top: 2px;
+  }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="ui"></div>
+<div id="vignette"></div>
+
+<div id="corner-hud">
+  <div class="title">SNOWFIELD.EXE</div>
+  <div>LAST MAINTENANCE: 1989</div>
+  <div>REACTOR STATUS: OFFLINE</div>
+  <div>WEATHER: HEAVY SNOW</div>
+
+  <!-- make this red and slow blinking-->
+  <div style="color: red; animation: blink 1.75s infinite;">SIGNAL FROM ORBITAL RELAY LOST</div> 
+  <div id="hud-chunks">CHUNKS: 0</div>
+  <div id="hud-pos">POS: 0, 0</div>
+</div>
+
+<div id="audio-panel">
+  <audio id="audio" src="03. Android Hell.mp3" loop></audio>
+  <div class="btn-row">
+    <button id="play-button">&#9654; PLAY</button>
+    <button id="pause-button">&#9646;&#9646; PAUSE</button>
+    <button id="stop-button">&#9632; STOP</button>
+    <button id="restart-button">&#8635; RESTART</button>
+  </div>
+</div>
+
+
+<script>
+// ═══════════════════════════════════════════════════════════
+//  PERLIN NOISE  (classic improved 2D)
+// ═══════════════════════════════════════════════════════════
+const PERM = new Uint8Array(512);
+(function() {
+  const p = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) p[i] = i;
+  // Seeded shuffle for reproducible world
+  let seed = 0xDEADBEEF;
+  function rng() {
+    seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+    return (seed >>> 0) / 0xFFFFFFFF;
+  }
+  for (let i = 255; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const tmp = p[i]; p[i] = p[j]; p[j] = tmp;
+  }
+  for (let i = 0; i < 512; i++) PERM[i] = p[i & 255];
+})();
+
+function fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+function lerp(a, b, t) { return a + t * (b - a); }
+function grad2(h, x, y) {
+  const v = h & 3;
+  const u = v < 2 ? x : y, w = v < 2 ? y : x;
+  return ((v & 1) ? -u : u) + ((v & 2) ? -w : w);
+}
+
+function perlin2(x, y) {
+  const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+  x -= Math.floor(x); y -= Math.floor(y);
+  const u = fade(x), v = fade(y);
+  const aa = PERM[PERM[X]+Y], ab = PERM[PERM[X]+Y+1];
+  const ba = PERM[PERM[X+1]+Y], bb = PERM[PERM[X+1]+Y+1];
+  return lerp(
+    lerp(grad2(aa, x,   y  ), grad2(ba, x-1, y  ), u),
+    lerp(grad2(ab, x,   y-1), grad2(bb, x-1, y-1), u),
+    v
+  );
+}
+
+// Fractal Brownian Motion — layered octaves for natural-looking hills
+function fbm(x, z) {
+  let v = 0, a = 0.5, f = 1, max = 0;
+  const oct = [[1, 0.5],[2.1, 0.25],[4.3, 0.125],[8.7, 0.0625],[17.3, 0.03125]];
+  for (const [freq, amp] of oct) {
+    v   += perlin2(x * freq, z * freq) * amp;
+    max += amp;
+  }
+  return v / max; // normalised -1..1 ish
+}
+
+// Final height: blocky integer steps, Minecraft-style
+function getHeight(wx, wz) {
+  const s = 0.022; // world scale
+  const raw = fbm(wx * s, wz * s);         // -0.5 .. 0.5 ish
+  const h = (raw + 0.6) * 11.0;            // shift + scale
+  return Math.max(0, Math.floor(h));        // integer blocks
+}
+
+// ═══════════════════════════════════════════════════════════
+//  WEBGL SETUP
+// ═══════════════════════════════════════════════════════════
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl', { antialias: false })
+        || canvas.getContext('experimental-webgl', { antialias: false });
+
+let W, H;
+function resize() {
+  W = canvas.width  = Math.floor(window.innerWidth  / 2);
+  H = canvas.height = Math.floor(window.innerHeight / 2);
+  canvas.style.width  = window.innerWidth  + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  gl.viewport(0, 0, W, H);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ═══════════════════════════════════════════════════════════
+//  SHADERS
+// ═══════════════════════════════════════════════════════════
+const TERR_VS = `
+  attribute vec3 aPos;
+  attribute float aShade;
+  uniform mat4 uMVP;
+  varying float vShade;
+  void main() {
+    vShade = aShade;
+    gl_Position = uMVP * vec4(aPos, 1.0);
+  }
+`;
+const TERR_FS = `
+  precision mediump float;
+  varying float vShade;
+  uniform float uTime;
+  uniform float uStat;
+  float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+  void main() {
+    float n = hash(gl_FragCoord.xy + vec2(uTime*83.7, uTime*61.3)) * uStat;
+    float c = clamp(vShade + n, 0.0, 1.0);
+    gl_FragColor = vec4(c,c,c,1.0);
+  }
+`;
+const SNOW_VS = `
+  attribute vec3 aPos;
+  attribute float aBright;
+  uniform mat4 uMVP;
+  varying float vBright;
+  void main() {
+    vBright = aBright;
+    gl_Position = uMVP * vec4(aPos, 1.0);
+  }
+`;
+const SNOW_FS = `
+  precision mediump float;
+  varying float vBright;
+  void main() {
+    gl_FragColor = vec4(vBright,vBright,vBright,0.92);
+  }
+`;
+
+function mkSh(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  return s;
+}
+function mkProg(vs, fs) {
+  const p = gl.createProgram();
+  gl.attachShader(p, mkSh(gl.VERTEX_SHADER, vs));
+  gl.attachShader(p, mkSh(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p); return p;
+}
+
+const tProg = mkProg(TERR_VS, TERR_FS);
+const sProg = mkProg(SNOW_VS, SNOW_FS);
+
+const tLoc = {
+  pos:  gl.getAttribLocation(tProg, 'aPos'),
+  shd:  gl.getAttribLocation(tProg, 'aShade'),
+  mvp:  gl.getUniformLocation(tProg, 'uMVP'),
+  time: gl.getUniformLocation(tProg, 'uTime'),
+  stat: gl.getUniformLocation(tProg, 'uStat'),
+};
+const sLoc = {
+  pos: gl.getAttribLocation(sProg, 'aPos'),
+  br:  gl.getAttribLocation(sProg, 'aBright'),
+  mvp: gl.getUniformLocation(sProg, 'uMVP'),
+};
+
+// ═══════════════════════════════════════════════════════════
+//  INFINITE CHUNK SYSTEM
+// ═══════════════════════════════════════════════════════════
+const CHUNK_SIZE = 16;
+const VIEW_DIST  = 6;       // chunks radius
+const chunkMap   = new Map();
+
+function chunkKey(cx, cz) { return (cx & 0xFFFF) | ((cz & 0xFFFF) << 16); }
+
+function buildChunk(cx, cz) {
+  const verts = []; // stride: x,y,z, shade
+  const ox = cx * CHUNK_SIZE, oz = cz * CHUNK_SIZE;
+
+  function tri(ax,ay,az, bx,by,bz, cx2,cy2,cz2, sh) {
+    verts.push(ax,ay,az,sh, bx,by,bz,sh, cx2,cy2,cz2,sh);
+  }
+  function quad(x0,y0,z0, x1,y1,z1, x2,y2,z2, x3,y3,z3, sh) {
+    tri(x0,y0,z0, x1,y1,z1, x2,y2,z2, sh);
+    tri(x0,y0,z0, x2,y2,z2, x3,y3,z3, sh);
+  }
+
+  for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+    for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+      const wx = ox + lx, wz = oz + lz;
+      const y  = getHeight(wx, wz);
+      const yT = y + 1;
+
+      // Per-block brightness variation
+      const bv = (Math.abs(Math.sin(wx * 127.3 + wz * 311.7) * 43758.5) % 1) * 0.12;
+
+      // TOP
+      quad(wx,yT,wz,  wx+1,yT,wz,  wx+1,yT,wz+1,  wx,yT,wz+1,  0.78 + bv);
+
+      // SIDES — only where neighbour is lower
+      const yN = getHeight(wx,   wz+1);
+      const yS = getHeight(wx,   wz-1);
+      const yE = getHeight(wx+1, wz  );
+      const yW = getHeight(wx-1, wz  );
+
+      if (yN < y) quad(wx,yN,wz+1, wx+1,yN,wz+1, wx+1,yT,wz+1, wx,yT,wz+1,  0.44+bv);
+      if (yS < y) quad(wx+1,yS,wz, wx,yS,wz,     wx,yT,wz,     wx+1,yT,wz,   0.38+bv);
+      if (yE < y) quad(wx+1,yE,wz, wx+1,yE,wz+1, wx+1,yT,wz+1, wx+1,yT,wz,  0.50+bv);
+      if (yW < y) quad(wx,yW,wz+1, wx,yW,wz,     wx,yT,wz,     wx,yT,wz+1,   0.32+bv);
+    }
+  }
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STATIC_DRAW);
+  return { buf, count: verts.length / 4, cx, cz };
+}
+
+let lastCCX = null, lastCCZ = null;
+
+function updateChunks(camX, camZ) {
+  const ccx = Math.floor(camX / CHUNK_SIZE);
+  const ccz = Math.floor(camZ / CHUNK_SIZE);
+  if (ccx === lastCCX && ccz === lastCCZ) return;
+  lastCCX = ccx; lastCCZ = ccz;
+
+  // Add new chunks (build at most a few per frame to avoid stalls)
+  let built = 0;
+  for (let dx = -VIEW_DIST; dx <= VIEW_DIST && built < 4; dx++) {
+    for (let dz = -VIEW_DIST; dz <= VIEW_DIST && built < 4; dz++) {
+      const cx = ccx + dx, cz = ccz + dz;
+      const k  = chunkKey(cx, cz);
+      if (!chunkMap.has(k)) {
+        chunkMap.set(k, buildChunk(cx, cz));
+        built++;
+      }
+    }
+  }
+
+  // Evict distant chunks
+  for (const [k, ch] of chunkMap) {
+    if (Math.abs(ch.cx - ccx) > VIEW_DIST + 2 || Math.abs(ch.cz - ccz) > VIEW_DIST + 2) {
+      gl.deleteBuffer(ch.buf);
+      chunkMap.delete(k);
+    }
+  }
+
+  document.getElementById('hud-chunks').textContent = 'CHUNKS: ' + chunkMap.size;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SNOW PARTICLES  (camera-relative coords)
+// ═══════════════════════════════════════════════════════════
+const SNOW_COUNT = 2000;
+const snowRel = new Float32Array(SNOW_COUNT * 3);
+const snowBuf = gl.createBuffer();
+
+for (let i = 0; i < SNOW_COUNT; i++) {
+  snowRel[i*3  ] = (Math.random() - 0.5) * 55;
+  snowRel[i*3+1] = Math.random() * 24;
+  snowRel[i*3+2] = (Math.random() - 0.5) * 55;
+}
+
+function updateSnow(dt, t, camX, camY, camZ) {
+  for (let i = 0; i < SNOW_COUNT; i++) {
+    snowRel[i*3+1] -= dt * (1.0 + (i % 7) * 0.20);
+    snowRel[i*3  ] += Math.sin(t * 0.8 + i * 1.7) * dt * 0.22;
+    snowRel[i*3+2] += Math.cos(t * 0.6 + i * 2.3) * dt * 0.16;
+
+    const wx = camX + snowRel[i*3];
+    const wz = camZ + snowRel[i*3+2];
+    const wy = camY + snowRel[i*3+1];
+    if (wy < getHeight(wx, wz) + 0.3) {
+      snowRel[i*3  ] = (Math.random() - 0.5) * 55;
+      snowRel[i*3+1] = 20 + Math.random() * 8;
+      snowRel[i*3+2] = (Math.random() - 0.5) * 55;
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  MATRIX MATH
+// ═══════════════════════════════════════════════════════════
+function mat4() { return new Float32Array(16); }
+
+function perspective(out, fov, asp, n, f) {
+  const t = 1 / Math.tan(fov / 2);
+  out.fill(0);
+  out[0]=t/asp; out[5]=t;
+  out[10]=(f+n)/(n-f); out[11]=-1;
+  out[14]=2*f*n/(n-f);
+  return out;
+}
+
+function lookAt(out, ex,ey,ez, tx,ty,tz) {
+  let fx=tx-ex,fy=ty-ey,fz=tz-ez;
+  const fl=Math.sqrt(fx*fx+fy*fy+fz*fz); fx/=fl;fy/=fl;fz/=fl;
+  let rx=fy*0-fz*1, ry=fz*0-fx*0, rz=fx*1-fy*0;
+  const rl=Math.sqrt(rx*rx+ry*ry+rz*rz); rx/=rl;ry/=rl;rz/=rl;
+  const ux=ry*fz-rz*fy, uy=rz*fx-rx*fz, uz=rx*fy-ry*fx;
+  out[0]=rx;out[1]=ux;out[2]=-fx;out[3]=0;
+  out[4]=ry;out[5]=uy;out[6]=-fy;out[7]=0;
+  out[8]=rz;out[9]=uz;out[10]=-fz;out[11]=0;
+  out[12]=-(rx*ex+ry*ey+rz*ez);
+  out[13]=-(ux*ex+uy*ey+uz*ez);
+  out[14]=(fx*ex+fy*ey+fz*ez);
+  out[15]=1;
+  return out;
+}
+
+function mul4(out,a,b) {
+  for(let i=0;i<4;i++) for(let j=0;j<4;j++){
+    out[j*4+i]=0;
+    for(let k=0;k<4;k++) out[j*4+i]+=a[k*4+i]*b[j*4+k];
+  }
+  return out;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  CAMERA & RENDER LOOP
+// ═══════════════════════════════════════════════════════════
+let camX=0, camY=8, camZ=0;
+const proj=mat4(), view=mat4(), mvp=mat4();
+const t0=performance.now(); let lastT=t0;
+
+gl.enable(gl.DEPTH_TEST);
+gl.clearColor(0.05, 0.05, 0.05, 1);
+
+// Pre-build initial surrounding chunks synchronously
+for (let dx=-VIEW_DIST; dx<=VIEW_DIST; dx++)
+  for (let dz=-VIEW_DIST; dz<=VIEW_DIST; dz++) {
+    const k = chunkKey(dx, dz);
+    chunkMap.set(k, buildChunk(dx, dz));
+  }
+document.getElementById('hud-chunks').textContent = 'CHUNKS: ' + chunkMap.size;
+
+// Snow vertex buffer (reused each frame)
+const snowVerts = new Float32Array(SNOW_COUNT * 6 * 4); // 6 verts × (x,y,z,bright)
+
+function frame(now) {
+  requestAnimationFrame(frame);
+
+  const dt = Math.min((now - lastT) / 1000, 0.05);
+  lastT = now;
+  const t = (now - t0) / 1000;
+
+  // Cinematic flythrough: drift + slow forward travel
+  const yaw   = t * 0.055 + Math.sin(t * 0.045) * 0.60;
+  const pitch  = Math.sin(t * 0.08) * 0.09;
+
+  camX += Math.sin(yaw) * 4.2 * dt;
+  camZ -= Math.cos(yaw) * 4.2 * dt;
+  const gY = getHeight(camX, camZ);
+  camY += (gY + 6.5 + Math.sin(t * 0.15) * 1.4 - camY) * 0.05;
+
+  const lx = camX + Math.sin(yaw) * 14;
+  const ly = camY + Math.sin(pitch) * 14;
+  const lz = camZ - Math.cos(yaw) * 14;
+
+  // Stream chunks
+  updateChunks(camX, camZ);
+  updateSnow(dt, t, camX, camY, camZ);
+
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  perspective(proj, 1.15, W/H, 0.3, 300);
+  lookAt(view, camX, camY, camZ, lx, ly, lz);
+  mul4(mvp, proj, view);
+
+  const statAmt = 0.065 + 0.05 * Math.sin(t * 3.9);
+
+  // ── TERRAIN ──
+  gl.useProgram(tProg);
+  gl.uniformMatrix4fv(tLoc.mvp, false, mvp);
+  gl.uniform1f(tLoc.time, t);
+  gl.uniform1f(tLoc.stat, statAmt);
+
+  for (const ch of chunkMap.values()) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, ch.buf);
+    gl.enableVertexAttribArray(tLoc.pos);
+    gl.enableVertexAttribArray(tLoc.shd);
+    gl.vertexAttribPointer(tLoc.pos, 3, gl.FLOAT, false, 16, 0);
+    gl.vertexAttribPointer(tLoc.shd, 1, gl.FLOAT, false, 16, 12);
+    gl.drawArrays(gl.TRIANGLES, 0, ch.count);
+  }
+
+  // ── SNOW ──
+  const S = 0.18;
+  const bRx = Math.cos(yaw), bRz = Math.sin(yaw); // billboard right vec
+  let si = 0;
+  for (let i = 0; i < SNOW_COUNT; i++) {
+    const sx = camX + snowRel[i*3];
+    const sy = camY + snowRel[i*3+1];
+    const sz = camZ + snowRel[i*3+2];
+    const br = 0.80 + ((i * 1.7 % 7) / 7) * 0.18;
+    const x0=sx-bRx*S, z0=sz-bRz*S, x1=sx+bRx*S, z1=sz+bRz*S;
+    // tri 1
+    snowVerts[si++]=x0; snowVerts[si++]=sy+S; snowVerts[si++]=z0; snowVerts[si++]=br;
+    snowVerts[si++]=x1; snowVerts[si++]=sy+S; snowVerts[si++]=z1; snowVerts[si++]=br;
+    snowVerts[si++]=x1; snowVerts[si++]=sy-S; snowVerts[si++]=z1; snowVerts[si++]=br;
+    // tri 2
+    snowVerts[si++]=x0; snowVerts[si++]=sy+S; snowVerts[si++]=z0; snowVerts[si++]=br;
+    snowVerts[si++]=x1; snowVerts[si++]=sy-S; snowVerts[si++]=z1; snowVerts[si++]=br;
+    snowVerts[si++]=x0; snowVerts[si++]=sy-S; snowVerts[si++]=z0; snowVerts[si++]=br;
+  }
+
+  gl.useProgram(sProg);
+  gl.uniformMatrix4fv(sLoc.mvp, false, mvp);
+  gl.bindBuffer(gl.ARRAY_BUFFER, snowBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, snowVerts, gl.DYNAMIC_DRAW);
+  gl.enableVertexAttribArray(sLoc.pos);
+  gl.enableVertexAttribArray(sLoc.br);
+  gl.vertexAttribPointer(sLoc.pos, 3, gl.FLOAT, false, 16, 0);
+  gl.vertexAttribPointer(sLoc.br,  1, gl.FLOAT, false, 16, 12);
+  gl.drawArrays(gl.TRIANGLES, 0, SNOW_COUNT * 6);
+
+  // HUD
+  document.getElementById('hud-pos').textContent =
+    `POS: ${Math.floor(camX)}, ${Math.floor(camZ)}`;
+}
+
+requestAnimationFrame(frame);
+
+// ═══════════════════════════════════════════════════════════
+//  AUDIO CONTROLS
+// ═══════════════════════════════════════════════════════════
+(function() {
+  const audio   = document.getElementById('audio');
+  const volDisp = document.getElementById('audio-vol-display');
+  const playBtn = document.getElementById('play-button');
+
+  function updateVol() {
+    const pct = audio.muted ? 0 : Math.round(audio.volume * 100);
+    volDisp.textContent = 'VOL: ' + pct + '%';
+  }
+
+  function setPlaying(on) {
+    playBtn.classList.toggle('active', on);
+  }
+
+  document.getElementById('play-button').addEventListener('click', () => {
+    audio.play(); setPlaying(true);
+  });
+  document.getElementById('pause-button').addEventListener('click', () => {
+    audio.pause(); setPlaying(false);
+  });
+  document.getElementById('stop-button').addEventListener('click', () => {
+    audio.pause(); audio.currentTime = 0; setPlaying(false);
+  });
+  document.getElementById('restart-button').addEventListener('click', () => {
+    audio.currentTime = 0; audio.play(); setPlaying(true);
+  });
+  document.getElementById('volume-up-button').addEventListener('click', () => {
+    audio.volume = Math.min(1, Math.round((audio.volume + 0.1) * 10) / 10);
+    audio.muted = false; updateVol();
+  });
+  document.getElementById('volume-down-button').addEventListener('click', () => {
+    audio.volume = Math.max(0, Math.round((audio.volume - 0.1) * 10) / 10);
+    updateVol();
+  });
+  document.getElementById('mute-button').addEventListener('click', () => {
+    audio.muted = true; updateVol();
+  });
+  document.getElementById('unmute-button').addEventListener('click', () => {
+    audio.muted = false; updateVol();
+  });
+
+  audio.addEventListener('play',  () => setPlaying(true));
+  audio.addEventListener('pause', () => setPlaying(false));
+  audio.addEventListener('ended', () => setPlaying(false));
+})();
+
+// ═══════════════════════════════════════════════════════════
+//  AUDIO FILE LOADER
+// ═══════════════════════════════════════════════════════════
+let audioCtx, audioSource;
+document.getElementById('file-input').addEventListener('change', async e => {
+  const file = e.target.files[0]; if (!file) return;
+  document.getElementById('track-name').textContent =
+    file.name.replace(/\.[^.]+$/, '').toUpperCase();
+  if (audioSource) { try { audioSource.stop(); } catch(_){} }
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const buf = await audioCtx.decodeAudioData(await file.arrayBuffer());
+  audioSource = audioCtx.createBufferSource();
+  audioSource.buffer = buf;
+  audioSource.loop = true;
+  audioSource.connect(audioCtx.destination);
+  audioSource.start(0);
+});
+</script>
+</body>
+</html>
