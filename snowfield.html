@@ -88,6 +88,49 @@
     color: #aaa; font-size: 9px; letter-spacing: 2px;
     text-align: center; margin-top: 2px;
   }
+  #enter-btn {
+    position: fixed; bottom: 28px; left: 22px;
+    font-family: 'Courier New', monospace;
+    font-size: 11px; letter-spacing: 3px; text-transform: uppercase;
+    color: #fff; background: #000;
+    border: 2px solid #fff; padding: 10px 20px;
+    cursor: pointer; pointer-events: all; z-index: 20;
+    transition: background 0.05s, color 0.05s;
+  }
+  #enter-btn:hover  { background: #fff; color: #000; }
+  #enter-btn:active { background: #aaa; color: #000; }
+  #scene-overlay {
+    display: none; position: fixed; inset: 0;
+    background: #000; z-index: 200;
+    font-family: 'Courier New', monospace; color: #fff;
+    overflow: hidden; cursor: pointer; user-select: none;
+  }
+  #scene-overlay.active { display: flex; align-items: center; justify-content: center; flex-direction: column; }
+  #scene-overlay::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 1;
+    background: repeating-linear-gradient(to bottom, transparent 0px, transparent 3px, rgba(0,0,0,0.18) 3px, rgba(0,0,0,0.18) 4px);
+  }
+  #scene-content {
+    position: relative; z-index: 2;
+    text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px;
+  }
+  #scene-label  { font-size: 9px; letter-spacing: 4px; color: #444; }
+  #scene-title  { font-size: 13px; letter-spacing: 4px; color: #ccc; }
+  #scene-art {
+    font-size: 13px; line-height: 1.45; white-space: pre; text-align: left;
+    display: inline-block; border: 2px solid #fff; padding: 18px 22px; background: #000;
+  }
+  #scene-art.scene-flicker { animation: flicker 2.8s infinite; }
+  #scene-caption {
+    font-size: 10px; letter-spacing: 2px; color: #888;
+    white-space: pre-line; line-height: 2; max-width: 580px; text-align: center;
+  }
+  #scene-nav { font-size: 9px; letter-spacing: 4px; color: #fff; animation: blink 1.4s infinite; }
+  @keyframes flicker {
+    0%,89%,91%,93%,100% { opacity: 1; }
+    90% { opacity: 0.15; }
+    92% { opacity: 0.7;  }
+  }
 </style>
 </head>
 <body>
@@ -96,24 +139,38 @@
 <div id="vignette"></div>
 
 <div id="corner-hud">
-  <div class="title">SNOWFIELD.EXE</div>
-  <div>LAST MAINTENANCE: 1989</div>
-  <div>REACTOR STATUS: OFFLINE</div>
+  <div class="title">Ilyushin Il-14</div>
+  <div>ICE RECONNAISSANCE</div>
+  <div>POLE OF INACCESSIBILITY: 83°54'S, 64°53'E</div>
+  <div>SCAN MODE: RADAR</div>
   <div>WEATHER: HEAVY SNOW</div>
-
+  <div>LAST MAINTENANCE: 14 FEB 1989</div>
+  
   <!-- make this red and slow blinking-->
   <div style="color: red; animation: blink 1.75s infinite;">SIGNAL FROM ORBITAL RELAY LOST</div> 
   <div id="hud-chunks">CHUNKS: 0</div>
   <div id="hud-pos">POS: 0, 0</div>
 </div>
 
+<button id="enter-btn">[ ENTER APARTMENT ]</button>
+
+<div id="scene-overlay">
+  <div id="scene-content">
+    <div id="scene-label"></div>
+    <div id="scene-title"></div>
+    <pre id="scene-art"></pre>
+    <div id="scene-caption"></div>
+    <div id="scene-nav">[ CLICK TO CONTINUE ]</div>
+  </div>
+</div>
+
 <div id="audio-panel">
   <audio id="audio" src="03. Android Hell.mp3" loop></audio>
   <div class="btn-row">
-    <button id="play-button">&#9654; PLAY</button>
-    <button id="pause-button">&#9646;&#9646; PAUSE</button>
-    <button id="stop-button">&#9632; STOP</button>
-    <button id="restart-button">&#8635; RESTART</button>
+    <button id="play-button">&#9654; АКТИВИРОВАТЬ</button>
+    <button id="pause-button">&#9646;&#9646; ПАУЗА</button>
+    <button id="stop-button">&#9632; СТОП</button>
+    <button id="restart-button">&#8635; ПЕРЕЗАПУСК</button>
   </div>
 </div>
 
@@ -572,6 +629,148 @@ requestAnimationFrame(frame);
   audio.addEventListener('play',  () => setPlaying(true));
   audio.addEventListener('pause', () => setPlaying(false));
   audio.addEventListener('ended', () => setPlaying(false));
+})();
+
+// ═══════════════════════════════════════════════════════════
+//  APARTMENT SCENES
+// ═══════════════════════════════════════════════════════════
+(function() {
+  const TV_CHARS   = '#%@&*:;|=+~';
+  const SNOW_CHARS = '*. ';
+  function rndChar(s) { return s[Math.floor(Math.random() * s.length)]; }
+
+  function animSnow(art) {
+    const lines = art.split('\n');
+    for (let i = 0; i < 3; i++) {
+      if (!lines[i]) continue;
+      lines[i] = lines[i]
+        .replace(/[*.]/g, () => Math.random() < 0.45 ? ' ' : rndChar('*. '))
+        .replace(/ /g,    () => Math.random() < 0.03  ? rndChar('*.')  : ' ');
+    }
+    return lines.join('\n');
+  }
+
+  function animTV(art) {
+    return art.replace(/X/g, () => rndChar(TV_CHARS));
+  }
+
+  const SCENES = [
+    {
+      label:   'BLOCK 7  //  EXTERIOR  //  -18°C',
+      title:   'KHRUSCHEVKA — ENTRANCE 3',
+      caption: 'YEAR: 1994  //  23:47  //  TEMP: -18°C\nONLY SIX WINDOWS ARE LIT TONIGHT.',
+      type:    'exterior',
+      art: [
+        '   *      .         *      .    *        .   ',
+        ' .    *       .    *     .       *      .    ',
+        '                                             ',
+        ' +------+------+------+------+------+------+ ',
+        ' |  ##  |      |      |  ##  |      |  ##  | ',
+        ' +------+------+------+------+------+------+ ',
+        ' |      |  ##  |      |      |      |      | ',
+        ' +------+------+------+------+------+------+ ',
+        ' |  ##  |      |  ##  |      |      |  ##  | ',
+        ' +------+------+------+------+------+------+ ',
+        ' |      |      |      |  ##  |      |      | ',
+        ' +------+------+------+------+------+------+ ',
+        ' |      |  ##  |      |      |  ##  |      | ',
+        ' +--+---+------+------+------+------+------+ ',
+        '    | | |                                    ',
+        ' ===|=|=|================================    ',
+        '  . . . . . . . . . . . . . . . . . . .     ',
+      ].join('\n'),
+    },
+    {
+      label:   'BLOCK 7  //  FLOOR 4  //  CORRIDOR',
+      title:   'STAIRWELL — 4TH FLOOR',
+      caption: 'SMELL: BOILED CABBAGE.  CIGARETTE SMOKE.  MOLD.\nAPT. 47 — THE LOCK IS BROKEN.',
+      type:    'hallway',
+      art: [
+        '  __________________________________________________',
+        ' |                                                  |',
+        ' |  .-------.  .-------.  .-------.  .-------.     |',
+        ' |  | [ 47] |  | [ 48] |  | [ 49] |  | [ 50] |     |',
+        " |  |  (o)  |  |  (o)  |  |  (o)  |  |  (o)  |     |",
+        ' |  |       |  |       |  |       |  |       |     |',
+        " |  '-------'  '-------'  '-------'  '-------'     |",
+        ' |                                                  |',
+        ' |       ~ OVERHEAD LAMP: FLICKERING ~              |',
+        ' |                                                  |',
+        ' | . _ . _ . _ . _ . _ . _ . _ . _ . _ . _ . _ .  |',
+        ' |__________________________________________________|',
+        '                                                     ',
+        '  SOMETHING IS DRIPPING BEHIND THE WALL.            ',
+      ].join('\n'),
+    },
+    {
+      label:   'BLOCK 7  //  APT. 47  //  INTERIOR',
+      title:   'APARTMENT 47',
+      caption: 'THE TV HAS BEEN ON FOR THREE DAYS.\nNOBODY REMEMBERS TURNING IT ON.',
+      type:    'interior',
+      art: [
+        ' .------------------------------------------------. ',
+        ' | .------. |           .---------.  .---------. | ',
+        ' | |      | |           |XXXXXXXXX|  | = = = = | | ',
+        ' | | SHKAF| |           |XXXXXXXXX|  | = = = = | | ',
+        ' | |      | |           |= TV === |  | = = = = | | ',
+        " | '------' |           '---------'  '---------' | ",
+        " |          '------------------------------------' | ",
+        ' | [ D  I  V  A  N                           ]    | ',
+        ' | [__________________________________________]    | ',
+        ' |           .---------.                          | ',
+        ' |  [ STOL ] | o     o |   o    o    o    o       | ',
+        " |           '---------'  << 4 PUSTYE BUTYLKI >>  | ",
+        " '------------------------------------------------' ",
+      ].join('\n'),
+    },
+  ];
+
+  let cur = 0, animId = null;
+
+  const overlay   = document.getElementById('scene-overlay');
+  const labelEl   = document.getElementById('scene-label');
+  const titleEl   = document.getElementById('scene-title');
+  const artEl     = document.getElementById('scene-art');
+  const captionEl = document.getElementById('scene-caption');
+  const navEl     = document.getElementById('scene-nav');
+
+  function showScene(idx) {
+    clearInterval(animId);
+    artEl.classList.remove('scene-flicker');
+    const s = SCENES[idx];
+    labelEl.textContent   = s.label;
+    titleEl.textContent   = s.title;
+    captionEl.textContent = s.caption;
+    navEl.textContent     = idx < SCENES.length - 1 ? '[ CLICK TO CONTINUE ]' : '[ CLICK TO EXIT ]';
+
+    if (s.type === 'exterior') {
+      artEl.textContent = s.art;
+      animId = setInterval(() => { artEl.textContent = animSnow(s.art); }, 380);
+    } else if (s.type === 'hallway') {
+      artEl.textContent = s.art;
+      artEl.classList.add('scene-flicker');
+    } else {
+      artEl.textContent = animTV(s.art);
+      animId = setInterval(() => { artEl.textContent = animTV(s.art); }, 120);
+    }
+  }
+
+  function advance() {
+    if (cur < SCENES.length - 1) { showScene(++cur); }
+    else { clearInterval(animId); overlay.classList.remove('active'); }
+  }
+
+  document.getElementById('enter-btn').addEventListener('click', () => {
+    cur = 0;
+    overlay.classList.add('active');
+    showScene(0);
+  });
+  overlay.addEventListener('click', advance);
+  document.addEventListener('keydown', e => {
+    if (!overlay.classList.contains('active')) return;
+    if (e.key === 'Escape') { clearInterval(animId); overlay.classList.remove('active'); }
+    if (e.key === 'Enter' || e.key === ' ') advance();
+  });
 })();
 
 // ═══════════════════════════════════════════════════════════
